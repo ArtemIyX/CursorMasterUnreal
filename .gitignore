@@ -1,0 +1,29 @@
+# Binaries
+Binaries/
+Intermediate/
+Saved/
+
+# Build artifacts
+*.pdb
+*.exp
+*.lib
+*.dll
+*.exe
+*.log
+
+# Generated
+*.generated.h
+*.gen.cpp
+
+# IDE
+.vs/
+.vscode/
+*.sln
+*.suo
+*.user
+*.VC.db
+*.VC.opendb
+
+# Rider
+.idea/
+*.DotSettings.user
