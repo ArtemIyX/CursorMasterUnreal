@@ -21,11 +21,13 @@ struct CURSORMASTER_API FHardwareCursorSize
 	TArray<uint8> CurBytes;
 };
 
-UCLASS()
+UCLASS(Blueprintable, BlueprintType)
 class CURSORMASTER_API UHardwareCursorAsset : public UObject
 {
 	GENERATED_BODY()
 
+public:
+	UHardwareCursorAsset() {}
 public:
 	UPROPERTY(VisibleAnywhere, Category = "Cursor")
 	TArray<FHardwareCursorSize> Sizes;

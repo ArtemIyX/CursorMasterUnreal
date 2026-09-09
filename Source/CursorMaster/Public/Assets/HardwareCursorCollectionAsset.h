@@ -8,11 +8,13 @@
 #include "UObject/NoExportTypes.h"
 #include "HardwareCursorCollectionAsset.generated.h"
 
-UCLASS()
+UCLASS(Blueprintable, BlueprintType)
 class CURSORMASTER_API UHardwareCursorCollectionAsset : public UObject
 {
 	GENERATED_BODY()
 
+public:
+	UHardwareCursorCollectionAsset() {}
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cursor")
 	TMap<TEnumAsByte<EMouseCursor::Type>, TObjectPtr<UHardwareCursorAsset>> Cursors;

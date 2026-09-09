@@ -6,12 +6,14 @@
 #include "UObject/StrongObjectPtr.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Views/SListView.h"
+#include "Input/DragAndDrop.h"
 
 class UHardwareCursorAsset;
 class UHardwareCursorCollectionAsset;
 class SDockTab;
 class FSpawnTabArgs;
 class UTexture2D;
+struct FCursorPngImportRequest;
 
 struct FCursorPreviewEntry
 {
@@ -28,6 +30,8 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+	virtual FReply OnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent) override;
+	virtual FReply OnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent) override;
 
 private:
 	void RefreshEntries();
@@ -36,7 +40,8 @@ private:
 	FReply ImportPng();
 	FReply DeleteSelected();
 	bool HasSelection() const;
-	void ImportPngBytes(TArray<uint8> InPngBytes, FIntPoint InSourceSize, int32 InTargetSize, FIntPoint InHotspot);
+	void ImportPngFile(const FString& InFilePath);
+	void ImportPngBytes(TArray<uint8> InPngBytes, FIntPoint InSourceSize, TArray<FCursorPngImportRequest> InRequests);
 	TStrongObjectPtr<UTexture2D> CreatePreviewTexture(const FHardwareCursorSize& InEntry) const;
 
 	TWeakObjectPtr<UHardwareCursorAsset> Asset;

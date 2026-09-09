@@ -1,8 +1,10 @@
 #include "CursorMasterAssetEditor.h"
+#include "CursorMasterImageImport.h"
 
 #include "Assets/HardwareCursorAsset.h"
 #include "Assets/HardwareCursorCollectionAsset.h"
 #include "DesktopPlatformModule.h"
+
 #include "Editor.h"
 #include "FileHelpers.h"
 #include "Framework/Docking/TabManager.h"
@@ -10,11 +12,11 @@
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "IDetailsView.h"
-#include "ImageUtils.h"
 #include "Engine/Texture2D.h"
 #include "Libs/CursorMasterLib.h"
 #include "Misc/FileHelper.h"
 #include "Misc/MessageDialog.h"
+#include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
 #include "SCursorPngImportDialog.h"
@@ -61,6 +63,34 @@ void SHardwareCursorAssetEditor::Construct(const FArguments& InArgs)
 			]
 		]
 	];
+}
+
+FReply SHardwareCursorAssetEditor::OnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent)
+{
+	const TSharedPtr<FExternalDragOperation> externalDrag = InDragDropEvent.GetOperationAs<FExternalDragOperation>();
+	if (!externalDrag.IsValid()) { return FReply::Unhandled(); }
+
+	for (const FString& filePath : externalDrag->GetFiles())
+	{
+		if (FPaths::GetExtension(filePath).Equals(TEXT("png"), ESearchCase::IgnoreCase)) { return FReply::Handled(); }
+	}
+	return FReply::Unhandled();
+}
+
+FReply SHardwareCursorAssetEditor::OnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent)
+{
+	const TSharedPtr<FExternalDragOperation> externalDrag = InDragDropEvent.GetOperationAs<FExternalDragOperation>();
+	if (!externalDrag.IsValid()) { return FReply::Unhandled(); }
+
+	for (const FString& filePath : externalDrag->GetFiles())
+	{
+		if (FPaths::GetExtension(filePath).Equals(TEXT("png"), ESearchCase::IgnoreCase))
+		{
+			ImportPngFile(filePath);
+			return FReply::Handled();
+		}
+	}
+	return FReply::Unhandled();
 }
 
 void SHardwareCursorAssetEditor::RefreshEntries()
@@ -123,50 +153,78 @@ FReply SHardwareCursorAssetEditor::ImportPng()
 	if (!desktopPlatform) { return FReply::Handled(); }
 	TArray<FString> files;
 	if (!desktopPlatform->OpenFileDialog(FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr), TEXT("Import PNG Cursor"), FString(), FString(), TEXT("PNG files (*.png)|*.png"), EFileDialogFlags::None, files) || files.IsEmpty()) { return FReply::Handled(); }
-	TArray<uint8> pngBytes;
-	if (!FFileHelper::LoadFileToArray(pngBytes, *files[0])) { FMessageDialog::Open(EAppMsgType::Ok, INVTEXT("Could not read the selected PNG.")); return FReply::Handled(); }
-	IImageWrapperModule& imageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-	const TSharedPtr<IImageWrapper> image = imageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-	if (!image.IsValid() || !image->SetCompressed(pngBytes.GetData(), pngBytes.Num())) { FMessageDialog::Open(EAppMsgType::Ok, INVTEXT("The selected file is not a valid PNG.")); return FReply::Handled(); }
-	const FIntPoint sourceSize(image->GetWidth(), image->GetHeight());
-	if (sourceSize.X < 1 || sourceSize.Y < 1 || sourceSize.X != sourceSize.Y) { FMessageDialog::Open(EAppMsgType::Ok, INVTEXT("Cursor PNGs must be square.")); return FReply::Handled(); }
-	TArray<int32> existingSizes;
-	if (const UHardwareCursorAsset* asset = Asset.Get()) { for (const FHardwareCursorSize& entry : asset->Sizes) { existingSizes.Add(entry.Size); } }
-	SCursorPngImportDialog::Open(sourceSize, MoveTemp(existingSizes), [this, pngBytes = MoveTemp(pngBytes), sourceSize](int32 targetSize, FIntPoint hotspot) mutable { ImportPngBytes(MoveTemp(pngBytes), sourceSize, targetSize, hotspot); });
+	ImportPngFile(files[0]);
 	return FReply::Handled();
 }
 
-void SHardwareCursorAssetEditor::ImportPngBytes(TArray<uint8> InPngBytes, FIntPoint InSourceSize, int32 InTargetSize, FIntPoint InHotspot)
+void SHardwareCursorAssetEditor::ImportPngFile(const FString& InFilePath)
 {
-	if (!Asset.IsValid()) { return; }
-	TArray<uint8> pngBytes = MoveTemp(InPngBytes);
-	if (InSourceSize.X != InTargetSize)
-	{
-		IImageWrapperModule& imageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-		const TSharedPtr<IImageWrapper> decoder = imageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-		TArray<uint8> rawBytes;
-		if (!decoder.IsValid() || !decoder->SetCompressed(pngBytes.GetData(), pngBytes.Num()) || !decoder->GetRaw(ERGBFormat::BGRA, 8, rawBytes)) { FMessageDialog::Open(EAppMsgType::Ok, INVTEXT("Could not decode the selected PNG.")); return; }
-		TArray<FColor> sourcePixels;
-		sourcePixels.SetNumUninitialized(InSourceSize.X * InSourceSize.Y);
-		FMemory::Memcpy(sourcePixels.GetData(), rawBytes.GetData(), rawBytes.Num());
-		TArray<FColor> resizedPixels;
-		FImageUtils::ImageResize(InSourceSize.X, InSourceSize.Y, sourcePixels, InTargetSize, InTargetSize, resizedPixels, false);
-		const TSharedPtr<IImageWrapper> encoder = imageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-		if (!encoder.IsValid() || !encoder->SetRaw(resizedPixels.GetData(), resizedPixels.Num() * sizeof(FColor), InTargetSize, InTargetSize, ERGBFormat::BGRA, 8)) { FMessageDialog::Open(EAppMsgType::Ok, INVTEXT("Could not resize the selected PNG.")); return; }
-		const TArray64<uint8> encodedBytes = encoder->GetCompressed();
-		pngBytes.Reset();
-		pngBytes.Append(encodedBytes.GetData(), encodedBytes.Num());
-	}
-	TArray<uint8> curBytes;
-	FString error;
-	if (!UCursorMasterLib::ConvertPngBytesToCur(pngBytes, InHotspot, curBytes, error)) { FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(error)); return; }
-	const FScopedTransaction transaction(INVTEXT("Import Hardware Cursor"));
+	TArray<uint8> pngBytes;
+	if (!FFileHelper::LoadFileToArray(pngBytes, *InFilePath)) { FMessageDialog::Open(EAppMsgType::Ok, INVTEXT("Could not read the selected PNG.")); return; }
+	IImageWrapperModule& imageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+	const TSharedPtr<IImageWrapper> image = imageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+	if (!image.IsValid() || !image->SetCompressed(pngBytes.GetData(), pngBytes.Num())) { FMessageDialog::Open(EAppMsgType::Ok, INVTEXT("The selected file is not a valid PNG.")); return; }
+	const FIntPoint sourceSize(image->GetWidth(), image->GetHeight());
+	if (sourceSize.X < 1 || sourceSize.Y < 1 || sourceSize.X != sourceSize.Y) { FMessageDialog::Open(EAppMsgType::Ok, INVTEXT("Cursor PNGs must be square.")); return; }
+	TArray<int32> existingSizes;
+	if (const UHardwareCursorAsset* asset = Asset.Get()) { for (const FHardwareCursorSize& entry : asset->Sizes) { existingSizes.Add(entry.Size); } }
+	SCursorPngImportDialog::Open(sourceSize, MoveTemp(existingSizes), [this, pngBytes = MoveTemp(pngBytes), sourceSize](TArray<FCursorPngImportRequest> requests) mutable { ImportPngBytes(MoveTemp(pngBytes), sourceSize, MoveTemp(requests)); });
+}
+
+void SHardwareCursorAssetEditor::ImportPngBytes(TArray<uint8> InPngBytes, FIntPoint InSourceSize, TArray<FCursorPngImportRequest> InRequests)
+{
 	UHardwareCursorAsset* asset = Asset.Get();
+	if (!asset || InPngBytes.IsEmpty() || InSourceSize.X < 1 || InSourceSize.Y < 1 || InSourceSize.X != InSourceSize.Y || InRequests.IsEmpty()) { return; }
+
+	InRequests.Sort([](const FCursorPngImportRequest& left, const FCursorPngImportRequest& right) { return left.TargetSize < right.TargetSize; });
+	const int32 maxTargetSize = FMath::Min3(InSourceSize.X, InSourceSize.Y, 256);
+	for (int32 index = 0; index < InRequests.Num(); ++index)
+	{
+		const FCursorPngImportRequest& request = InRequests[index];
+		if (request.TargetSize < 1 || request.TargetSize > maxTargetSize || request.Hotspot.X < 0 || request.Hotspot.X >= request.TargetSize || request.Hotspot.Y < 0 || request.Hotspot.Y >= request.TargetSize || (index > 0 && InRequests[index - 1].TargetSize == request.TargetSize))
+		{
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(INVTEXT("Invalid cursor import request for size {0} x {0}."), request.TargetSize));
+			return;
+		}
+	}
+
+	TArray<FHardwareCursorSize> preparedEntries;
+	preparedEntries.Reserve(InRequests.Num());
+	for (const FCursorPngImportRequest& request : InRequests)
+	{
+		TArray<uint8> targetPngBytes;
+		if (request.TargetSize == InSourceSize.X)
+		{
+			targetPngBytes = InPngBytes;
+		}
+		else
+		{
+			if (!CursorMasterImageImport::ResizePng(InPngBytes, InSourceSize, request.TargetSize, targetPngBytes))
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::Format(INVTEXT("Could not resize the selected PNG for size {0} x {0}."), request.TargetSize));
+				return;
+			}
+		}
+
+		FHardwareCursorSize& entry = preparedEntries.AddDefaulted_GetRef();
+		entry.Size = request.TargetSize;
+		entry.Hotspot = request.Hotspot;
+		FString error;
+		if (!UCursorMasterLib::ConvertPngBytesToCur(targetPngBytes, request.Hotspot, entry.CurBytes, error))
+		{
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(INVTEXT("Failed to convert size {0} x {0}: {1}"), request.TargetSize, FText::FromString(error)));
+			return;
+		}
+	}
+
+	const FScopedTransaction transaction(INVTEXT("Import Hardware Cursor Sizes"));
 	asset->Modify();
-	FHardwareCursorSize* entry = asset->Sizes.FindByPredicate([InTargetSize](const FHardwareCursorSize& candidate) { return candidate.Size == InTargetSize; });
-	if (!entry) { entry = &asset->Sizes.AddDefaulted_GetRef(); entry->Size = InTargetSize; }
-	entry->Hotspot = InHotspot;
-	entry->CurBytes = MoveTemp(curBytes);
+	for (FHardwareCursorSize& preparedEntry : preparedEntries)
+	{
+		FHardwareCursorSize* entry = asset->Sizes.FindByPredicate([&preparedEntry](const FHardwareCursorSize& candidate) { return candidate.Size == preparedEntry.Size; });
+		if (!entry) { entry = &asset->Sizes.AddDefaulted_GetRef(); }
+		*entry = MoveTemp(preparedEntry);
+	}
 	asset->Sizes.Sort([](const FHardwareCursorSize& left, const FHardwareCursorSize& right) { return left.Size < right.Size; });
 	asset->PostEditChange();
 	asset->MarkPackageDirty();
